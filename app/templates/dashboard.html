@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Science Distributor - Live Articles from arXiv</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        .menu {
+            background: #333;
+            padding: 15px 30px;
+            color: white;
+        }
+        .menu a {
+            color: white;
+            margin-right: 20px;
+            text-decoration: none;
+        }
+        .star-rating {
+            display: inline-flex;
+            gap: 5px;
+            font-size: 28px;
+            cursor: pointer;
+        }
+        .star {
+            color: #ddd;
+            transition: color 0.2s;
+            cursor: pointer;
+        }
+        .star:hover,
+        .star.active {
+            color: #ffc107;
+            text-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+        .star-rating.disabled .star {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        .feedback-textarea {
+            font-family: inherit;
+            font-size: 14px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 20px auto;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .live-badge {
+            display: inline-block;
+            background: #4CAF50;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        .header-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .refresh-btn {
+            background: #ccc;
+            color: #666;
+            border: none;
+            padding: 10px 20px;
+            cursor: not-allowed;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .refresh-btn.active {
+            background: #667eea;
+            color: white;
+            cursor: pointer;
+        }
+        .refresh-btn.active:hover {
+            background: #764ba2;
+            transform: scale(1.02);
+        }
+        .progress-info {
+            background: #f9f9f9;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .progress-bar-container {
+            flex: 1;
+            margin: 0 15px;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+        }
+        .rating-count {
+            font-weight: bold;
+            color: #667eea;
+        }
+        .table-wrapper {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: #f2f2f2;
+            font-weight: 600;
+        }
+        .article-title a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        .article-title a:hover {
+            text-decoration: underline;
+        }
+        .like-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            margin: 2px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .dislike-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            margin: 2px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .rated {
+            background: #ddd;
+            color: #666;
+            padding: 5px 12px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .undo-btn {
+            background: #999;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            margin-left: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            display: none;
+            z-index: 1000;
+        }
+        .ws-status {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            padding: 5px 10px;
+            background: #333;
+            color: white;
+            border-radius: 5px;
+            font-size: 11px;
+        }
+        .ws-status.connected {
+            background: #4CAF50;
+        }
+        .no-articles {
+            text-align: center;
+            padding: 50px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="menu">
+        <a href="/dashboard">Сегодняшняя подборка</a>
+        <a href="/settings">Мои настройки</a>
+        <a href="/profile">Мой профиль</a>
+        <a href="/logout">Выйти</a>
+    </div>
+    
+    <div class="container">
+        <div class="header-controls">
+            <div>
+                <h1>📖 Сегодняшняя подборка 
+                    <span class="live-badge">LIVE arXiv</span>
+                </h1>
+                <div class="subtitle">Добро пожаловать, {{ user.email }}! Свежие статьи с arXiv.org</div>
+            </div>
+            <div>
+                <button id="refreshBtn" class="refresh-btn" onclick="refreshDashboard()" disabled>
+                    🔄 Обновить статьи
+                </button>
+            </div>
+        </div>
+        
+        <!-- Прогресс оценивания -->
+        <div class="progress-info">
+            <span>📊 Прогресс оценивания:</span>
+            <div class="progress-bar-container">
+                <div id="progressFill" class="progress-fill" style="width: 0%">0%</div>
+            </div>
+            <span id="ratingStats" class="rating-count">0/0 оценено</span>
+        </div>
+        
+        {% if articles %}
+        <div class="table-wrapper">
+            <table id="articlesTable">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;">№</th>
+                        <th>Название статьи</th>
+                        <th style="width: 150px;">Авторы</th>
+                        <th>Аннотация</th>
+                        <th style="width: 80px;">Ссылка</th>
+                        <th style="width: 120px;">Моя оценка</th>
+                    </tr>
+                </thead>
+                <tbody id="articlesTableBody">
+                    {% for article in articles %}
+                    <tr data-arxiv-id="{{ article.arxiv_id }}" data-rated="{% if user_ratings.get(article.arxiv_id) %}true{% else %}false{% endif %}">
+                        <td style="text-align: center;">{{ loop.index }}</td>
+                        <td class="article-title">
+                            <a href="{{ article.url }}" target="_blank">{{ article.title[:150] }}{% if article.title|length > 150 %}...{% endif %}</a>
+                        </td>
+                        <td>{{ article.authors[:100] }}{% if article.authors|length > 100 %}...{% endif %}</td>
+                        <td>{{ article.abstract[:350] }}{% if article.abstract|length > 350 %}...{% endif %}</td>
+                        <td><a href="{{ article.url }}" target="_blank">Открыть</a></td>
+                        <td class="rating-cell">
+                            {% set rating = user_ratings.get(article.arxiv_id) %}
+                            {% if rating == 'like' %}
+                                <span class="rated">👍 Оценено</span>
+                                <button class="undo-btn" data-arxiv-id="{{ article.arxiv_id }}" data-rating="remove" data-title="{{ article.title|replace('"', '&quot;')|replace("'", '&#39;') }}" data-authors="{{ article.authors|replace('"', '&quot;')|replace("'", '&#39;') }}" data-abstract="{{ article.abstract|replace('"', '&quot;')|replace("'", '&#39;') }}" data-url="{{ article.url }}" data-topic-id="{{ article.topic_id }}">Отменить</button>
+                            {% elif rating == 'dislike' %}
+                                <span class="rated">👎 Оценено</span>
+                                <button class="undo-btn" data-arxiv-id="{{ article.arxiv_id }}" data-rating="remove" data-title="{{ article.title|replace('"', '&quot;')|replace("'", '&#39;') }}" data-authors="{{ article.authors|replace('"', '&quot;')|replace("'", '&#39;') }}" data-abstract="{{ article.abstract|replace('"', '&quot;')|replace("'", '&#39;') }}" data-url="{{ article.url }}" data-topic-id="{{ article.topic_id }}">Отменить</button>
+                            {% else %}
+                                <button class="like-btn" data-arxiv-id="{{ article.arxiv_id }}" data-rating="like" data-title="{{ article.title|replace('"', '&quot;')|replace("'", '&#39;') }}" data-authors="{{ article.authors|replace('"', '&quot;')|replace("'", '&#39;') }}" data-abstract="{{ article.abstract|replace('"', '&quot;')|replace("'", '&#39;') }}" data-url="{{ article.url }}" data-topic-id="{{ article.topic_id }}">👍</button>
+                                <button class="dislike-btn" data-arxiv-id="{{ article.arxiv_id }}" data-rating="dislike" data-title="{{ article.title|replace('"', '&quot;')|replace("'", '&#39;') }}" data-authors="{{ article.authors|replace('"', '&quot;')|replace("'", '&#39;') }}" data-abstract="{{ article.abstract|replace('"', '&quot;')|replace("'", '&#39;') }}" data-url="{{ article.url }}" data-topic-id="{{ article.topic_id }}">👎</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Блок обратной связи - новая версия -->
+        <div class="batch-feedback" style="margin-top: 30px; padding: 20px; background: #f9f9f9; border-radius: 8px;">
+            <h3>📊 Оцените качество сегодняшней подборки</h3>
+            <div style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 200px;">
+                    <label style="display: block; margin-bottom: 10px; font-weight: bold;">🎯 Точность рекомендаций:</label>
+                    <div class="star-rating" data-category="accuracy">
+                        <span class="star" data-value="1">★</span>
+                        <span class="star" data-value="2">★</span>
+                        <span class="star" data-value="3">★</span>
+                        <span class="star" data-value="4">★</span>
+                        <span class="star" data-value="5">★</span>
+                    </div>
+                </div>
+                <div style="flex: 1; min-width: 200px;">
+                    <label style="display: block; margin-bottom: 10px; font-weight: bold;">🔬 Релевантность тем:</label>
+                    <div class="star-rating" data-category="relevance">
+                        <span class="star" data-value="1">★</span>
+                        <span class="star" data-value="2">★</span>
+                        <span class="star" data-value="3">★</span>
+                        <span class="star" data-value="4">★</span>
+                        <span class="star" data-value="5">★</span>
+                    </div>
+                </div>
+                <div style="flex: 1; min-width: 200px;">
+                    <label style="display: block; margin-bottom: 10px; font-weight: bold;">🆕 Свежесть статей:</label>
+                    <div class="star-rating" data-category="freshness">
+                        <span class="star" data-value="1">★</span>
+                        <span class="star" data-value="2">★</span>
+                        <span class="star" data-value="3">★</span>
+                        <span class="star" data-value="4">★</span>
+                        <span class="star" data-value="5">★</span>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <textarea id="feedbackText" placeholder="Ваши пожелания по улучшению подборки (какие авторы, темы или ключевые слова добавить?)" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; resize: vertical;"></textarea>
+            </div>
+            <div style="margin-top: 15px; text-align: center;">
+                <button id="submitFeedbackBtn" onclick="submitDetailedFeedback()" style="background: #667eea; color: white; border: none; padding: 10px 30px; border-radius: 5px; cursor: pointer; font-size: 16px;">
+                    📤 Отправить обратную связь
+                </button>
+            </div>
+            <div id="feedbackStatus" style="margin-top: 10px; text-align: center; font-size: 12px; color: #666;"></div>
+        </div>
+
+        <style>
+        .star-rating {
+            display: inline-flex;
+            gap: 5px;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .star {
+            color: #ddd;
+            transition: color 0.2s;
+        }
+        .star:hover,
+        .star.active {
+            color: #ffc107;
+        }
+        .star-rating.disabled .star {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        </style>
+        {% elif no_articles_message %}
+        <div class="no-articles">
+            <p>{{ no_articles_message }}</p>
+        </div>
+        {% else %}
+        <div class="no-articles">
+            <p>😕 Нет статей для отображения.</p>
+            <p>Пожалуйста, настройте ваши предпочтения в <a href="/settings">настройках</a>.</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div id="toast" class="toast"></div>
+    <div id="wsStatus" class="ws-status">WebSocket: Подключение...</div>
+    
+    <script>
+        // Глобальные переменные
+        let totalArticles = {{ articles|length }};
+        let wsUrl = "{{ ws_url }}";
+        let ws = null;
+        
+        // Функция обновления прогресса
+        function updateProgress() {
+            const rows = document.querySelectorAll('#articlesTableBody tr');
+            let ratedCount = 0;
+            rows.forEach(function(row) {
+                if (row.getAttribute('data-rated') === 'true') {
+                    ratedCount++;
+                }
+            });
+            
+            const progress = totalArticles > 0 ? (ratedCount / totalArticles) * 100 : 0;
+            const progressFill = document.getElementById('progressFill');
+            const ratingStats = document.getElementById('ratingStats');
+            const refreshBtn = document.getElementById('refreshBtn');
+            
+            if (progressFill) {
+                progressFill.style.width = progress + '%';
+                progressFill.textContent = Math.round(progress) + '%';
+            }
+            
+            if (ratingStats) {
+                ratingStats.textContent = ratedCount + '/' + totalArticles + ' оценено';
+            }
+            
+            if (ratedCount === totalArticles && totalArticles > 0) {
+                refreshBtn.disabled = false;
+                refreshBtn.classList.add('active');
+                refreshBtn.title = 'Все статьи оценены! Нажмите для обновления';
+                
+                if (!window.allRatedNotified) {
+                    window.allRatedNotified = true;
+                    showConfetti();
+                    showToast('🎉 Поздравляем! Вы оценили все статьи! Нажмите "Обновить статьи" для новой подборки', false);
+                }
+            } else {
+                refreshBtn.disabled = true;
+                refreshBtn.classList.remove('active');
+                const remaining = totalArticles - ratedCount;
+                refreshBtn.title = 'Оцените все статьи (осталось ' + remaining + ')';
+                window.allRatedNotified = false;
+            }
+        }
+        
+        // Функция конфетти
+        function showConfetti() {
+            const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
+            for (let i = 0; i < 50; i++) {
+                const confetti = document.createElement('div');
+                confetti.style.position = 'fixed';
+                confetti.style.left = Math.random() * window.innerWidth + 'px';
+                confetti.style.top = '-10px';
+                confetti.style.width = '10px';
+                confetti.style.height = '10px';
+                confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                confetti.style.pointerEvents = 'none';
+                confetti.style.zIndex = '9999';
+                confetti.style.borderRadius = '50%';
+                document.body.appendChild(confetti);
+                
+                const animation = confetti.animate([
+                    { transform: 'translateY(0px) rotate(0deg)', opacity: 1 },
+                    { transform: 'translateY(' + window.innerHeight + 'px) rotate(' + (Math.random() * 360) + 'deg)', opacity: 0 }
+                ], {
+                    duration: 2000 + Math.random() * 1000,
+                    easing: 'ease-out'
+                });
+                
+                animation.onfinish = function() { confetti.remove(); };
+            }
+        }
+        
+        // Функция уведомлений
+        function showToast(message, isError) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.style.backgroundColor = isError ? '#f44336' : '#333';
+            toast.style.display = 'block';
+            setTimeout(function() {
+                toast.style.display = 'none';
+            }, 3000);
+        }
+        
+        // Функция оценки статьи
+        async function rateArticle(arxivId, rating, title, authors, abstract, url, topicId) {
+            const formData = new FormData();
+            formData.append('article_id', arxivId);
+            formData.append('rating', rating);
+            formData.append('title', title);
+            formData.append('authors', authors);
+            formData.append('abstract', abstract);
+            formData.append('url', url);
+            formData.append('topic_id', topicId);
+            
+            try {
+                const response = await fetch('/rate_article', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    const row = document.querySelector('tr[data-arxiv-id="' + arxivId + '"]');
+                    if (row) {
+                        const ratingCell = row.querySelector('.rating-cell');
+                        const safeTitle = title.replace(/"/g, '&quot;');
+                        const safeAuthors = authors.replace(/"/g, '&quot;');
+                        const safeAbstract = abstract.replace(/"/g, '&quot;');
+                        
+                        if (rating === 'like') {
+                            ratingCell.innerHTML = '<span class="rated">👍 Оценено</span> <button class="undo-btn" data-arxiv-id="' + arxivId + '" data-rating="remove" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + url + '" data-topic-id="' + topicId + '">Отменить</button>';
+                            row.setAttribute('data-rated', 'true');
+                            showToast('✓ 👍 Статья добавлена в избранное', false);
+                            
+                            // ОБНОВЛЯЕМ СТАТИСТИКУ В ПРОФИЛЕ
+                            updateProfileStats();
+                        } else if (rating === 'dislike') {
+                            ratingCell.innerHTML = '<span class="rated">👎 Оценено</span> <button class="undo-btn" data-arxiv-id="' + arxivId + '" data-rating="remove" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + url + '" data-topic-id="' + topicId + '">Отменить</button>';
+                            row.setAttribute('data-rated', 'true');
+                            showToast('✓ 👎 Спасибо за反馈', false);
+                            
+                            // ОБНОВЛЯЕМ СТАТИСТИКУ В ПРОФИЛЕ
+                            updateProfileStats();
+                        } else if (rating === 'remove') {
+                            ratingCell.innerHTML = '<button class="like-btn" data-arxiv-id="' + arxivId + '" data-rating="like" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + url + '" data-topic-id="' + topicId + '">👍</button> <button class="dislike-btn" data-arxiv-id="' + arxivId + '" data-rating="dislike" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + url + '" data-topic-id="' + topicId + '">👎</button>';
+                            row.setAttribute('data-rated', 'false');
+                            showToast('✓ Оценка удалена', false);
+                            
+                            // ОБНОВЛЯЕМ СТАТИСТИКУ В ПРОФИЛЕ
+                            updateProfileStats();
+                        }
+                        updateProgress();
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showToast('❌ Ошибка при сохранении оценки', true);
+            }
+        }
+
+        // Функция для обновления статистики в профиле
+        function updateProfileStats() {
+            // Если мы на странице профиля, обновляем её
+            if (window.location.pathname === '/profile') {
+                location.reload();
+            }
+            // Сохраняем в localStorage, что статистика изменилась
+            localStorage.setItem('stats_updated', Date.now().toString());
+        }
+        
+        // Функция оценки подборки
+        async function rateBatch(rating) {
+            const formData = new FormData();
+            formData.append('rating', rating);
+            
+            try {
+                const response = await fetch('/rate_batch', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showToast('✓ Спасибо за обратную связь!', false);
+                    const btns = document.querySelectorAll('.rating-btn');
+                    btns.forEach(function(btn) { btn.disabled = true; });
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showToast('❌ Ошибка при сохранении оценки', true);
+            }
+        }
+        
+        // Функция обновления дашборда
+        async function refreshDashboard() {
+            const refreshBtn = document.getElementById('refreshBtn');
+            
+            if (refreshBtn.disabled) {
+                showToast('⚠️ Сначала оцените все статьи на странице!', true);
+                return;
+            }
+            
+            refreshBtn.textContent = '⏳ Загрузка...';
+            refreshBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/live-articles');
+                
+                if (!response.ok) {
+                    throw new Error('HTTP error! status: ' + response.status);
+                }
+                
+                let data = await response.json();
+                
+                if (data && data.articles && Array.isArray(data.articles) && data.articles.length > 0) {
+                    // Ограничиваем до 15 статей
+                    if (data.articles.length > 15) {
+                        data.articles = data.articles.slice(0, 15);
+                    }
+                    
+                    const tbody = document.getElementById('articlesTableBody');
+                    if (tbody) {
+                        tbody.innerHTML = '';
+                        
+                        for (let i = 0; i < data.articles.length; i++) {
+                            const article = data.articles[i];
+                            const row = tbody.insertRow();
+                            
+                            row.setAttribute('data-arxiv-id', article.arxiv_id || '');
+                            row.setAttribute('data-rated', 'false');
+                            
+                            const safeTitle = (article.title || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                            const safeAuthors = (article.authors || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                            const safeAbstract = (article.abstract || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                            
+                            const ratingHtml = '<button class="like-btn" data-arxiv-id="' + (article.arxiv_id || '') + '" data-rating="like" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + (article.url || '') + '" data-topic-id="' + (article.topic_id || 0) + '">👍</button> <button class="dislike-btn" data-arxiv-id="' + (article.arxiv_id || '') + '" data-rating="dislike" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + (article.url || '') + '" data-topic-id="' + (article.topic_id || 0) + '">👎</button>';
+                            
+                            row.innerHTML = `
+                                <td style="text-align: center;">${i + 1}</td>
+                                <td class="article-title">
+                                    <a href="${article.url || '#'}" target="_blank">${safeTitle.substring(0, 150)}${safeTitle.length > 150 ? '...' : ''}</a>
+                                </td>
+                                <td>${safeAuthors.substring(0, 100)}${safeAuthors.length > 100 ? '...' : ''}</td>
+                                <td>${safeAbstract.substring(0, 350)}${safeAbstract.length > 350 ? '...' : ''}</td>
+                                <td><a href="${article.url || '#'}" target="_blank">Открыть</a></td>
+                                <td class="rating-cell">${ratingHtml}</td>
+                            `;
+                        }
+                        
+                        totalArticles = data.articles.length;
+                        window.allRatedNotified = false;
+                        updateProgress();
+                        showToast('✅ Подборка обновлена! Оцените ' + totalArticles + ' новых статей', false);
+                    }
+                } else {
+                    showToast('❌ Новых статей не найдено. Попробуйте позже.', true);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showToast('❌ Ошибка при загрузке статей: ' + error.message, true);
+            } finally {
+                refreshBtn.textContent = '🔄 Обновить статьи';
+                refreshBtn.disabled = true;
+                refreshBtn.classList.remove('active');
+            }
+        }
+        
+        // WebSocket подключение
+        function connectWebSocket() {
+            if (!wsUrl) {
+                console.log('WebSocket URL not available');
+                return;
+            }
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                console.log('WebSocket connected');
+                const statusEl = document.getElementById('wsStatus');
+                if (statusEl) {
+                    statusEl.textContent = 'WebSocket: Online';
+                    statusEl.classList.add('connected');
+                }
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('WebSocket:', data);
+                    if (data.type === 'connected') {
+                        showToast('✓ Real-time обновления активны', false);
+                    }
+                } catch(e) {
+                    console.log('WebSocket message:', event.data);
+                }
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket disconnected');
+                const statusEl = document.getElementById('wsStatus');
+                if (statusEl) {
+                    statusEl.textContent = 'WebSocket: Offline';
+                    statusEl.classList.remove('connected');
+                }
+                setTimeout(connectWebSocket, 5000);
+            };
+        }
+        
+        // Инициализация звёздных рейтингов
+        let ratings = {
+            accuracy: 0,
+            relevance: 0,
+            freshness: 0
+        };
+
+        function initStarRatings() {
+            const starContainers = document.querySelectorAll('.star-rating');
+            starContainers.forEach(container => {
+                const category = container.getAttribute('data-category');
+                const stars = container.querySelectorAll('.star');
+                
+                stars.forEach(star => {
+                    star.addEventListener('click', function() {
+                        const value = parseInt(this.getAttribute('data-value'));
+                        ratings[category] = value;
+                        
+                        // Обновляем активные звёзды
+                        stars.forEach(s => {
+                            const starValue = parseInt(s.getAttribute('data-value'));
+                            if (starValue <= value) {
+                                s.classList.add('active');
+                            } else {
+                                s.classList.remove('active');
+                            }
+                        });
+                        
+                        showToast(`✓ Оценка "${category}" установлена: ${value}/5`, false);
+                    });
+                });
+            });
+        }
+
+        async function submitDetailedFeedback() {
+            const feedbackText = document.getElementById('feedbackText').value;
+            const submitBtn = document.getElementById('submitFeedbackBtn');
+            const statusDiv = document.getElementById('feedbackStatus');
+            
+            // Проверяем, что хоть что-то оценено
+            const hasRatings = ratings.accuracy > 0 || ratings.relevance > 0 || ratings.freshness > 0;
+            const hasText = feedbackText.trim().length > 0;
+            
+            if (!hasRatings && !hasText) {
+                showToast('⚠️ Пожалуйста, оцените подборку или оставьте комментарий', true);
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ Отправка...';
+            statusDiv.innerHTML = 'Отправка обратной связи...';
+            
+            try {
+                const response = await fetch('/api/detailed-feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        accuracy: ratings.accuracy,
+                        relevance: ratings.relevance,
+                        freshness: ratings.freshness,
+                        feedback_text: feedbackText,
+                        article_ids: Array.from(document.querySelectorAll('#articlesTableBody tr')).map(row => row.getAttribute('data-arxiv-id'))
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    statusDiv.innerHTML = '✅ Спасибо за обратную связь! Нейросеть учтёт ваши пожелания.';
+                    statusDiv.style.color = '#4CAF50';
+                    
+                    // Сбрасываем форму
+                    document.getElementById('feedbackText').value = '';
+                    ratings = { accuracy: 0, relevance: 0, freshness: 0 };
+                    document.querySelectorAll('.star').forEach(star => star.classList.remove('active'));
+                    
+                    showToast('✅ Спасибо! Обратная связь отправлена нейросети', false);
+                    
+                    // Блокируем кнопку на 30 секунд
+                    setTimeout(() => {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = '📤 Отправить обратную связь';
+                        statusDiv.innerHTML = '';
+                    }, 30000);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                statusDiv.innerHTML = '❌ Ошибка при отправке. Попробуйте позже.';
+                statusDiv.style.color = '#f44336';
+                submitBtn.disabled = false;
+                submitBtn.textContent = '📤 Отправить обратную связь';
+                showToast('❌ Ошибка при отправке', true);
+            }
+        }
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', function() {
+            updateProgress();
+            connectWebSocket();
+            initStarRatings();
+        });
+
+                // Обработка кликов на кнопки (делегирование)
+                document.addEventListener('click', function(e) {
+                    const target = e.target;
+                    
+            if (target.classList.contains('like-btn') || target.classList.contains('dislike-btn')) {
+                const arxivId = target.getAttribute('data-arxiv-id');
+                const rating = target.getAttribute('data-rating');
+                const title = target.getAttribute('data-title');
+                const authors = target.getAttribute('data-authors');
+                const abstract = target.getAttribute('data-abstract');
+                const url = target.getAttribute('data-url');
+                const topicId = target.getAttribute('data-topic-id');
+                rateArticle(arxivId, rating, title, authors, abstract, url, topicId);
+            }
+            
+            if (target.classList.contains('undo-btn')) {
+                const arxivId = target.getAttribute('data-arxiv-id');
+                const rating = target.getAttribute('data-rating');
+                const title = target.getAttribute('data-title');
+                const authors = target.getAttribute('data-authors');
+                const abstract = target.getAttribute('data-abstract');
+                const url = target.getAttribute('data-url');
+                const topicId = target.getAttribute('data-topic-id');
+                rateArticle(arxivId, rating, title, authors, abstract, url, topicId);
+            }
+        });
+        
+        // Инициализация при загрузке страницы
+        document.addEventListener('DOMContentLoaded', function() {
+            updateProgress();
+            connectWebSocket();
+        });
+    </script>
+</body>
+</html>

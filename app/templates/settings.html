@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Настройки - Science Distributor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        .menu {
+            background: #333;
+            padding: 15px 30px;
+            color: white;
+        }
+        .menu a {
+            color: white;
+            margin-right: 20px;
+            text-decoration: none;
+        }
+        .container {
+            max-width: 800px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-bottom: 30px;
+            color: #333;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .section h3 {
+            margin-bottom: 15px;
+            color: #555;
+        }
+        .topic-group {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .topic-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            display: none;
+        }
+        .buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .btn-secondary {
+            background: #999;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .btn-primary:hover { background: #764ba2; }
+        .btn-secondary:hover { background: #777; }
+    </style>
+</head>
+<body>
+    <div class="menu">
+        <a href="/dashboard">Сегодняшняя подборка</a>
+        <a href="/settings">Мои настройки</a>
+        <a href="/profile">Мой профиль</a>
+        <a href="/logout">Выйти</a>
+    </div>
+    
+    <div class="container">
+        <h1>⚙️ Настройки предпочтений</h1>
+        
+        <form id="settingsForm" method="post">
+            <!-- Темы -->
+            <div class="section">
+                <h3>📚 Выберите темы (одну или несколько)</h3>
+                <div class="topic-group">
+                    {% for topic in topics %}
+                    <label>
+                        <input type="checkbox" name="topics" value="{{ topic.id }}" 
+                               {% if topic.id in user_topics %}checked{% endif %}>
+                        {{ topic.name }}
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <!-- Авторы (опционально) -->
+            <div class="section">
+                <h3>✍️ Предпочитаемые авторы (опционально)</h3>
+                <input type="text" name="authors" placeholder="LeCun, Goodfellow, Schmidhuber" 
+                       value="{{ user_authors }}">
+                <small>Введите фамилии авторов через запятую</small>
+            </div>
+            
+            <!-- Ключевые слова (опционально) -->
+            <div class="section">
+                <h3>🔑 Ключевые слова (опционально)</h3>
+                <input type="text" name="keywords" placeholder="deep learning, generative models, GAN"
+                       value="{{ user_keywords }}">
+                <small>Введите ключевые слова через запятую</small>
+            </div>
+            
+            <div class="warning" id="warningMessage">
+                ⚠️ Смена темы приведёт к сбросу накопленных данных обучения. Вы уверены?
+                <button type="button" onclick="confirmReset()" style="margin-left: 10px;">Да, сбросить</button>
+                <button type="button" onclick="hideWarning()">Отмена</button>
+            </div>
+            
+            <div class="buttons">
+                <button type="submit" class="btn-primary">Сохранить настройки</button>
+                <button type="button" class="btn-secondary" onclick="skipSettings()">Пропустить</button>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+        let originalTopics = [...document.querySelectorAll('input[name="topics"]:checked')].map(cb => cb.value);
+        
+        document.getElementById('settingsForm').addEventListener('submit', function(e) {
+            const currentTopics = [...document.querySelectorAll('input[name="topics"]:checked')].map(cb => cb.value);
+            
+            // Проверяем, изменились ли темы
+            if (JSON.stringify(originalTopics.sort()) !== JSON.stringify(currentTopics.sort())) {
+                e.preventDefault();
+                document.getElementById('warningMessage').style.display = 'block';
+            }
+        });
+        
+        function confirmReset() {
+            document.getElementById('warningMessage').style.display = 'none';
+            // Добавляем параметр подтверждения
+            const form = document.getElementById('settingsForm');
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'confirm_reset';
+            input.value = 'true';
+            form.appendChild(input);
+            form.submit();
+        }
+        
+        function hideWarning() {
+            document.getElementById('warningMessage').style.display = 'none';
+        }
+        
+        function skipSettings() {
+            window.location.href = '/dashboard';
+        }
+    </script>
+</body>
+</html>
