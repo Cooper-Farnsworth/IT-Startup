@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.database import User, Topic, Article, Notification
-from app.arxiv_fetcher import ArxivFetcher
 from app.neural_engine import neural_engine
 from app.websocket_manager import ws_manager
 import logging
