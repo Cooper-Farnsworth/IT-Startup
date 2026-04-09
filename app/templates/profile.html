@@ -83,19 +83,6 @@
             height: 100%;
             transition: width 0.3s;
         }
-        .refresh-stats {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .refresh-stats:hover {
-            background: #764ba2;
-        }
         .last-updated {
             color: #999;
             font-size: 12px;
@@ -113,11 +100,7 @@
     </div>
     
     <div class="container">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h1>📊 Мой профиль и аналитика</h1>
-            <button class="refresh-stats" onclick="refreshProfile()">🔄 Обновить статистику</button>
-        </div>
-        <div class="last-updated" id="lastUpdated">Последнее обновление: --</div>
+        <h1>📊 Мой профиль и аналитика</h1>
         
         <div class="stats-grid">
             <div class="stat-card">
@@ -160,6 +143,8 @@
             </div>
             <p id="accuracyText">Чем больше вы оцениваете статьи, тем точнее становятся рекомендации</p>
         </div>
+        
+        <div class="last-updated" id="lastUpdated">Автообновление каждые 30 секунд</div>
     </div>
     
     <div id="toast" style="position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 12px 20px; border-radius: 8px; display: none; z-index: 1000;"></div>
@@ -179,8 +164,6 @@
         
         async function loadProfile() {
             try {
-                showToast('🔄 Загрузка статистики...');
-                
                 const response = await fetch('/api/profile');
                 
                 if (!response.ok) {
@@ -190,7 +173,6 @@
                 const data = await response.json();
                 console.log('Profile data:', data);
                 
-                // Обновляем основные показатели
                 document.getElementById('likesCount').textContent = data.likes || 0;
                 document.getElementById('dislikesCount').textContent = data.dislikes || 0;
                 document.getElementById('totalArticles').textContent = data.total_articles || 0;
@@ -199,7 +181,6 @@
                 document.getElementById('accuracy').textContent = accuracyPercent + '%';
                 document.getElementById('accuracyBar').style.width = accuracyPercent + '%';
                 
-                // Обновляем текст точности
                 const totalRatings = (data.likes || 0) + (data.dislikes || 0);
                 if (totalRatings === 0) {
                     document.getElementById('accuracyText').innerHTML = '📊 Пока нет оценок. Оценивайте статьи, чтобы нейросеть обучалась!';
@@ -211,29 +192,24 @@
                     document.getElementById('accuracyText').innerHTML = '🎉 Отлично! Нейросеть хорошо понимает ваши предпочтения.';
                 }
                 
-                // Авторы
-                const authorsHtml = (data.top_authors || []).map(a => 
-                    `<span class="tag tag-highlight">${escapeHtml(a.name)} (${a.count})</span>`
+                // Данные из настроек
+                const authorsHtml = (data.user_authors || []).map(a => 
+                    `<span class="tag tag-highlight">${escapeHtml(a)}</span>`
                 ).join('');
-                document.getElementById('authorsList').innerHTML = authorsHtml || 'Нет данных';
+                document.getElementById('authorsList').innerHTML = authorsHtml || '<span style="color:#999;">Нет данных</span>';
                 
-                // Ключевые слова
-                const keywordsHtml = (data.top_keywords || []).map(k => 
-                    `<span class="tag">${escapeHtml(k.word)} (${k.count})</span>`
+                const keywordsHtml = (data.user_keywords || []).map(k => 
+                    `<span class="tag">${escapeHtml(k)}</span>`
                 ).join('');
-                document.getElementById('keywordsList').innerHTML = keywordsHtml || 'Нет данных';
+                document.getElementById('keywordsList').innerHTML = keywordsHtml || '<span style="color:#999;">Нет данных</span>';
                 
-                // Темы
-                const topicsHtml = (data.topics || []).map(t => 
-                    `<span class="tag">${escapeHtml(t.name)} (${t.count})</span>`
+                const topicsHtml = (data.user_topics || []).map(t => 
+                    `<span class="tag">${escapeHtml(t)}</span>`
                 ).join('');
-                document.getElementById('topicsList').innerHTML = topicsHtml || 'Нет данных';
+                document.getElementById('topicsList').innerHTML = topicsHtml || '<span style="color:#999;">Нет данных</span>';
                 
-                // Обновляем время
                 lastUpdateTime = new Date();
-                document.getElementById('lastUpdated').textContent = `Последнее обновление: ${lastUpdateTime.toLocaleTimeString()}`;
-                
-                showToast('✅ Статистика обновлена');
+                document.getElementById('lastUpdated').textContent = `Автообновление: ${lastUpdateTime.toLocaleTimeString()}`;
                 
             } catch (error) {
                 console.error('Error loading profile:', error);
@@ -248,16 +224,10 @@
             return div.innerHTML;
         }
         
-        async function refreshProfile() {
-            await loadProfile();
-        }
-        
-        // Автоматическое обновление каждые 30 секунд
         setInterval(() => {
             loadProfile();
         }, 30000);
         
-        // Загрузка при открытии страницы
         loadProfile();
     </script>
 </body>

@@ -62,13 +62,17 @@
             transition: all 0.3s;
         }
         .refresh-btn.active {
-            background: #667eea;
+            background: #4CAF50;
             color: white;
             cursor: pointer;
         }
         .refresh-btn.active:hover {
-            background: #764ba2;
+            background: #45a049;
             transform: scale(1.02);
+        }
+        .refresh-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
         }
         .progress-info {
             background: #f9f9f9;
@@ -148,22 +152,16 @@
             border-radius: 4px;
             font-size: 16px;
         }
+        .like-btn:hover, .dislike-btn:hover {
+            opacity: 0.8;
+            transform: scale(1.05);
+        }
         .rated {
             background: #ddd;
             color: #666;
             padding: 5px 12px;
             border-radius: 4px;
             display: inline-block;
-        }
-        .undo-btn {
-            background: #999;
-            color: white;
-            border: none;
-            padding: 5px 12px;
-            margin-left: 5px;
-            cursor: pointer;
-            border-radius: 4px;
-            font-size: 12px;
         }
         .toast {
             position: fixed;
@@ -200,6 +198,66 @@
         .star:hover, .star.active {
             color: #ffc107;
         }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 5px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .congrats-message {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        /* Стили для раскрывающихся блоков */
+        .abstract-preview {
+            cursor: pointer;
+            color: #667eea;
+            font-size: 12px;
+            margin-top: 5px;
+            display: inline-block;
+        }
+        .abstract-preview:hover {
+            text-decoration: underline;
+        }
+        .full-abstract {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 5px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #333;
+            border-left: 3px solid #667eea;
+        }
+        .full-abstract.show {
+            display: block;
+        }
+        .expand-btn {
+            background: none;
+            border: none;
+            color: #667eea;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 5px;
+        }
+        .expand-btn:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -223,7 +281,10 @@
             </div>
         </div>
         
-        <!-- Прогресс оценивания -->
+        <div id="congratsMessage" class="congrats-message">
+            🎉 Отлично! Вы оценили все статьи! Нажмите "Обновить статьи" для новой подборки 🎉
+        </div>
+        
         <div class="progress-info">
             <span>📊 Прогресс оценивания:</span>
             <div class="progress-bar-container">
@@ -254,7 +315,20 @@
                                 <a href="{{ article.url }}" target="_blank">{{ article.title[:150] }}{% if article.title|length > 150 %}...{% endif %}</a>
                             </td>
                             <td>{{ article.authors[:100] }}{% if article.authors|length > 100 %}...{% endif %}</td>
-                            <td>{{ article.abstract[:350] }}{% if article.abstract|length > 350 %}...{% endif %}</td>
+                            <td class="abstract-cell">
+                                <div class="abstract-short">
+                                    {{ article.abstract[:200] }}{% if article.abstract|length > 200 %}...{% endif %}
+                                    {% if article.abstract|length > 200 %}
+                                    <button class="expand-btn" onclick="toggleAbstract('{{ article.arxiv_id }}')">📖 Читать полностью</button>
+                                    {% endif %}
+                                </div>
+                                <div id="abstract-full-{{ article.arxiv_id }}" class="full-abstract">
+                                    <strong>📝 Полная аннотация:</strong><br>
+                                    {{ article.abstract }}
+                                    <br><br>
+                                    <button class="expand-btn" onclick="toggleAbstract('{{ article.arxiv_id }}')">🔽 Свернуть</button>
+                                </div>
+                            </td>
                             <td><a href="{{ article.url }}" target="_blank">Открыть</a></td>
                             <td class="rating-cell">
                                 {% set rating = user_ratings.get(article.arxiv_id) %}
@@ -280,7 +354,6 @@
             {% endif %}
         </div>
         
-        <!-- Блок обратной связи -->
         <div class="batch-feedback">
             <h3>📊 Оцените качество сегодняшней подборки</h3>
             <div style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
@@ -332,10 +405,24 @@
     <script>
         let totalArticles = {{ articles|length }};
         let allRatedNotified = false;
+        let isLoading = false;
         
         let ratings = { accuracy: 0, relevance: 0, freshness: 0 };
         
-        // Функция обновления прогресса
+        // Функция для раскрытия аннотации
+        function toggleAbstract(arxivId) {
+            const fullAbstract = document.getElementById('abstract-full-' + arxivId);
+            const shortAbstract = fullAbstract.previousElementSibling;
+            
+            if (fullAbstract.classList.contains('show')) {
+                fullAbstract.classList.remove('show');
+                if (shortAbstract) shortAbstract.style.display = 'block';
+            } else {
+                fullAbstract.classList.add('show');
+                if (shortAbstract) shortAbstract.style.display = 'none';
+            }
+        }
+        
         function updateProgress() {
             const rows = document.querySelectorAll('#articlesTableBody tr');
             let ratedCount = 0;
@@ -349,6 +436,7 @@
             const progressFill = document.getElementById('progressFill');
             const ratingStats = document.getElementById('ratingStats');
             const refreshBtn = document.getElementById('refreshBtn');
+            const congratsMessage = document.getElementById('congratsMessage');
             
             if (progressFill) {
                 progressFill.style.width = progress + '%';
@@ -365,6 +453,10 @@
                 refreshBtn.classList.add('active');
                 refreshBtn.title = 'Все статьи оценены! Нажмите для обновления';
                 
+                if (congratsMessage) {
+                    congratsMessage.style.display = 'block';
+                }
+                
                 if (!allRatedNotified) {
                     allRatedNotified = true;
                     showConfetti();
@@ -375,11 +467,14 @@
                 refreshBtn.classList.remove('active');
                 const remaining = totalArticles - ratedCount;
                 refreshBtn.title = 'Оцените все статьи (осталось ' + remaining + ')';
+                
+                if (congratsMessage) {
+                    congratsMessage.style.display = 'none';
+                }
                 allRatedNotified = false;
             }
         }
         
-        // Функция конфетти
         function showConfetti() {
             const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
             for (let i = 0; i < 50; i++) {
@@ -417,7 +512,6 @@
             }, 3000);
         }
         
-        // Функция оценки статьи
         async function rateArticle(arxivId, rating, title, authors, abstract, url, topicId) {
             const formData = new FormData();
             formData.append('article_id', arxivId);
@@ -440,21 +534,24 @@
                     const row = document.querySelector('tr[data-arxiv-id="' + arxivId + '"]');
                     if (row) {
                         const ratingCell = row.querySelector('.rating-cell');
-                        const safeTitle = title.replace(/"/g, '&quot;');
-                        const safeAuthors = authors.replace(/"/g, '&quot;');
-                        const safeAbstract = abstract.replace(/"/g, '&quot;');
                         
                         if (rating === 'like') {
                             ratingCell.innerHTML = '<span class="rated">👍 Оценено</span>';
                             row.setAttribute('data-rated', 'true');
-                            showToast('✓ 👍 Статья добавлена в избранное', false);
+                            showToast('✓ Статья добавлена в избранное', false);
                         } else if (rating === 'dislike') {
                             ratingCell.innerHTML = '<span class="rated">👎 Оценено</span>';
                             row.setAttribute('data-rated', 'true');
-                            showToast('✓ 👎 Спасибо за反馈', false);
+                            showToast('✓ Спасибо за оценку', false);
                         }
                         updateProgress();
-                        updateProfileStats();
+                        
+                        if (data.refresh_needed) {
+                            showToast(data.message || 'Нейросеть обновила рекомендации!', false);
+                            setTimeout(() => {
+                                refreshDashboard();
+                            }, 2000);
+                        }
                     }
                 }
             } catch (error) {
@@ -463,14 +560,6 @@
             }
         }
         
-        function updateProfileStats() {
-            if (window.location.pathname === '/profile') {
-                location.reload();
-            }
-            localStorage.setItem('stats_updated', Date.now().toString());
-        }
-        
-        // Функция обновления дашборда (ТОЛЬКО ПОСЛЕ ОЦЕНКИ ВСЕХ СТАТЕЙ)
         async function refreshDashboard() {
             const refreshBtn = document.getElementById('refreshBtn');
             
@@ -479,8 +568,15 @@
                 return;
             }
             
-            refreshBtn.textContent = '⏳ Загрузка...';
+            if (isLoading) {
+                showToast('⏳ Загрузка уже идет...', false);
+                return;
+            }
+            
+            isLoading = true;
+            refreshBtn.innerHTML = '<span class="loading"></span> Загрузка...';
             refreshBtn.disabled = true;
+            refreshBtn.classList.remove('active');
             
             try {
                 const response = await fetch('/api/live-articles');
@@ -489,13 +585,9 @@
                     throw new Error('HTTP error! status: ' + response.status);
                 }
                 
-                let data = await response.json();
+                const data = await response.json();
                 
                 if (data && data.articles && Array.isArray(data.articles) && data.articles.length > 0) {
-                    if (data.articles.length > 15) {
-                        data.articles = data.articles.slice(0, 15);
-                    }
-                    
                     const tbody = document.getElementById('articlesTableBody');
                     if (tbody) {
                         tbody.innerHTML = '';
@@ -510,6 +602,8 @@
                             const safeTitle = (article.title || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                             const safeAuthors = (article.authors || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                             const safeAbstract = (article.abstract || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                            const shortAbstract = safeAbstract.substring(0, 200);
+                            const hasMore = safeAbstract.length > 200;
                             
                             const ratingHtml = '<button class="like-btn" data-arxiv-id="' + (article.arxiv_id || '') + '" data-rating="like" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + (article.url || '') + '" data-topic-id="' + (article.topic_id || 0) + '">👍</button> <button class="dislike-btn" data-arxiv-id="' + (article.arxiv_id || '') + '" data-rating="dislike" data-title="' + safeTitle + '" data-authors="' + safeAuthors + '" data-abstract="' + safeAbstract + '" data-url="' + (article.url || '') + '" data-topic-id="' + (article.topic_id || 0) + '">👎</button>';
                             
@@ -519,7 +613,18 @@
                                     <a href="${article.url || '#'}" target="_blank">${safeTitle.substring(0, 150)}${safeTitle.length > 150 ? '...' : ''}</a>
                                 </td>
                                 <td>${safeAuthors.substring(0, 100)}${safeAuthors.length > 100 ? '...' : ''}</td>
-                                <td>${safeAbstract.substring(0, 350)}${safeAbstract.length > 350 ? '...' : ''}</td>
+                                <td class="abstract-cell">
+                                    <div class="abstract-short">
+                                        ${shortAbstract}${hasMore ? '...' : ''}
+                                        ${hasMore ? '<button class="expand-btn" onclick="toggleAbstract(\'' + article.arxiv_id + '\')">📖 Читать полностью</button>' : ''}
+                                    </div>
+                                    <div id="abstract-full-${article.arxiv_id}" class="full-abstract">
+                                        <strong>📝 Полная аннотация:</strong><br>
+                                        ${safeAbstract}
+                                        <br><br>
+                                        <button class="expand-btn" onclick="toggleAbstract('${article.arxiv_id}')">🔽 Свернуть</button>
+                                    </div>
+                                </td>
                                 <td><a href="${article.url || '#'}" target="_blank">Открыть</a></td>
                                 <td class="rating-cell">${ratingHtml}</td>
                             `;
@@ -530,7 +635,6 @@
                         updateProgress();
                         showToast('✅ Подборка обновлена! Оцените ' + totalArticles + ' новых статей', false);
                         
-                        // Сбрасываем звездные рейтинги
                         ratings = { accuracy: 0, relevance: 0, freshness: 0 };
                         document.querySelectorAll('.star').forEach(star => star.classList.remove('active'));
                         document.getElementById('feedbackText').value = '';
@@ -542,13 +646,13 @@
                 console.error('Error:', error);
                 showToast('❌ Ошибка при загрузке статей: ' + error.message, true);
             } finally {
-                refreshBtn.textContent = '🔄 Обновить статьи';
+                isLoading = false;
+                refreshBtn.innerHTML = '🔄 Обновить статьи';
                 refreshBtn.disabled = true;
                 refreshBtn.classList.remove('active');
             }
         }
         
-        // Инициализация звёздных рейтингов
         function initStarRatings() {
             const starContainers = document.querySelectorAll('.star-rating');
             starContainers.forEach(container => {
@@ -621,7 +725,7 @@
                         submitBtn.disabled = false;
                         submitBtn.textContent = '📤 Отправить обратную связь';
                         statusDiv.innerHTML = '';
-                    }, 30000);
+                    }, 3000);
                 }
             } catch (error) {
                 console.error('Error:', error);
@@ -633,7 +737,45 @@
             }
         }
         
-        // Обработка кликов на кнопки
+        let socket = null;
+        let reconnectAttempts = 0;
+        
+        function connectWebSocket() {
+            const wsUrl = 'ws://localhost:8000/ws/{{ user.id }}';
+            socket = new WebSocket(wsUrl);
+            
+            socket.onopen = function() {
+                console.log('WebSocket connected');
+                reconnectAttempts = 0;
+            };
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('WebSocket message:', data);
+                
+                if (data.type === 'refresh_needed') {
+                    showToast(data.message || 'Нейросеть обновила рекомендации!', false);
+                    setTimeout(() => {
+                        refreshDashboard();
+                    }, 2000);
+                } else if (data.type === 'preparing_refresh') {
+                    showToast(data.message || 'Нейросеть анализирует ваши предпочтения...', false);
+                }
+            };
+            
+            socket.onclose = function() {
+                console.log('WebSocket disconnected');
+                if (reconnectAttempts < 5) {
+                    reconnectAttempts++;
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+            
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
         document.addEventListener('click', function(e) {
             const target = e.target;
             
@@ -649,10 +791,10 @@
             }
         });
         
-        // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
             updateProgress();
             initStarRatings();
+            connectWebSocket();
         });
     </script>
 </body>

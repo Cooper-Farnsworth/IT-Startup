@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
-from typing import Optional, List
+from typing import Optional, List, Dict
 import json
 from datetime import datetime
 import logging
@@ -23,6 +23,7 @@ from app.database import (
 )
 from app.neural_engine import neural_engine
 from app.websocket_manager import ws_manager
+from app.arxiv_direct import ArxivDirectParser
 
 app = FastAPI(title="Science Distributor - Real Articles from arXiv")
 os.makedirs("app/static", exist_ok=True)
@@ -32,6 +33,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Хранилище активных сессий пользователей (текущие статьи)
 user_sessions = {}
+# Хранилище последнего запроса для каждого пользователя
+user_last_query = {}
 
 def get_db():
     db = SessionLocal()
@@ -54,6 +57,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
             data = await websocket.receive_text()
             if data == 'ping':
                 await websocket.send_text('pong')
+            elif data == 'refresh':
+                await ws_manager.send_personal_message(user_id, {'type': 'refresh_needed', 'message': 'Refresh your recommendations'})
     except WebSocketDisconnect:
         ws_manager.disconnect(user_id)
 
@@ -116,81 +121,129 @@ async def dashboard(request: Request, user_id: Optional[str] = Cookie(None), db:
         return templates.TemplateResponse("dashboard.html", {
             "request": request, "user": user, "articles": [], "user_ratings": {},
             "ws_url": f"ws://localhost:8000/ws/{user.id}",
-            "no_articles_message": "Пожалуйста, выберите темы в настройках", "total_rated": 0
+            "no_articles_message": "Пожалуйста, выберите темы в настройках", 
+            "total_rated": 0,
+            "live_mode": True
         })
     
-    # Проверяем, есть ли сохраненная сессия для этого пользователя
     session_key = f"user_{user.id}"
-    saved_articles = user_sessions.get(session_key)
     
     # Получаем оценки пользователя
-    rated_arxiv_ids = set()
     user_ratings_dict = {}
     ratings = db.query(ArticleRating).join(Article).filter(ArticleRating.user_id == user.id).all()
     for rating in ratings:
         if rating.article and rating.article.arxiv_id:
-            rated_arxiv_ids.add(rating.article.arxiv_id)
             user_ratings_dict[rating.article.arxiv_id] = rating.rating
     
-    # Если есть сохраненная сессия И статьи еще не все оценены - используем её
-    if saved_articles and len(saved_articles) > 0:
-        # Проверяем, сколько статей из сессии уже оценено
-        unrated_count = sum(1 for a in saved_articles if a['arxiv_id'] not in rated_arxiv_ids)
-        
-        if unrated_count > 0:
-            # Используем сохраненные статьи
-            articles_data = saved_articles
-            logger.info(f"📚 Используем сохраненную сессию: {len(articles_data)} статей, неоценено: {unrated_count}")
-            
-            return templates.TemplateResponse("dashboard.html", {
-                "request": request, "user": user, "articles": articles_data,
-                "user_ratings": user_ratings_dict, "ws_url": f"ws://localhost:8000/ws/{user.id}",
-                "live_mode": True, "total_rated": len(rated_arxiv_ids)
-            })
-    
-    # Нет сохраненной сессии - загружаем новые статьи
-    logger.info(f"🔄 Загрузка новой подборки для user {user.id}")
-    
-    # Загружаем статьи из БД
-    articles_from_db = []
-    for topic in user_topics:
-        topic_articles = db.query(Article).filter(
-            Article.topic_id == topic.id,
-            Article.arxiv_id.notin_(rated_arxiv_ids)
-        ).order_by(Article.published_date.desc()).limit(100).all()
-        articles_from_db.extend(topic_articles)
-    
-    # Перемешиваем
-    random.shuffle(articles_from_db)
-    
-    # Персонализация
-    if articles_from_db:
-        try:
-            personalized = neural_engine.get_personalized_articles(user, articles_from_db, limit=15)
-            articles = personalized
-        except:
-            articles = articles_from_db[:15]
+    # ПРОВЕРЯЕМ: есть ли уже сохраненные статьи в сессии
+    if session_key in user_sessions and user_sessions[session_key]:
+        articles_data = user_sessions[session_key]
+        logger.info(f"📚 Используем сохраненную сессию для user {user.id}: {len(articles_data)} статей")
     else:
-        articles = []
-    
-    articles_data = []
-    for article in articles:
-        articles_data.append({
-            'arxiv_id': article.arxiv_id, 'title': article.title, 'authors': article.authors,
-            'abstract': (article.abstract[:400] if article.abstract else ''),
-            'url': article.url, 'topic_id': article.topic_id,
-            'topic_name': article.topic.name if article.topic else 'Unknown',
-            'user_rating': user_ratings_dict.get(article.arxiv_id)
-        })
-    
-    # Сохраняем в сессию
-    user_sessions[session_key] = articles_data
+        # Если сессии нет - ЗАГРУЖАЕМ статьи ПЕРВЫЙ РАЗ
+        logger.info(f"🆕 Первая загрузка статей для user {user.id}")
+        articles_data = await get_fresh_recommendations(user, db, limit=15)
+        user_sessions[session_key] = articles_data
     
     return templates.TemplateResponse("dashboard.html", {
         "request": request, "user": user, "articles": articles_data,
         "user_ratings": user_ratings_dict, "ws_url": f"ws://localhost:8000/ws/{user.id}",
-        "live_mode": True, "total_rated": len(rated_arxiv_ids)
+        "live_mode": True, "total_rated": len([r for r in ratings if r.rating in ['like', 'dislike']])
     })
+
+async def get_fresh_recommendations(user, db: Session, limit: int = 15) -> List[Dict]:
+    """Получает свежие рекомендации на основе текущих предпочтений"""
+    
+    arxiv_parser = ArxivDirectParser(db)
+    
+    # Получаем персонализированные статьи напрямую из arXiv
+    fresh_articles = neural_engine.get_personalized_recommendations_direct(
+        user, arxiv_parser, limit=limit
+    )
+    
+    # Сохраняем статьи в БД и формируем ответ
+    articles_data = []
+    for article_data in fresh_articles:
+        # Определяем тему
+        topic_id = None
+        if article_data.get('categories'):
+            main_cat = article_data['categories'][0].split('.')[0] if article_data['categories'] else None
+            topic = db.query(Topic).filter(Topic.arxiv_category.like(f'{main_cat}%')).first()
+            if topic:
+                topic_id = topic.id
+        
+        # Сохраняем в БД
+        saved_article = arxiv_parser.save_article(article_data, topic_id)
+        
+        articles_data.append({
+            'arxiv_id': saved_article.arxiv_id,
+            'title': saved_article.title,
+            'authors': saved_article.authors,
+            'abstract': saved_article.abstract if saved_article.abstract else '',
+            'url': saved_article.url,
+            'topic_id': saved_article.topic_id,
+            'topic_name': saved_article.topic.name if saved_article.topic else 'Science'
+        })
+    
+    return articles_data
+
+# ============ PROFILE ============
+
+@app.get("/profile", response_class=HTMLResponse)
+async def profile_page(request: Request, user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
+    """Страница профиля пользователя"""
+    if not user_id:
+        return RedirectResponse(url="/login")
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        return RedirectResponse(url="/login")
+    return templates.TemplateResponse("profile.html", {"request": request, "user": user})
+
+# ============ SETTINGS ============
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
+    if not user_id:
+        return RedirectResponse(url="/login")
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    topics = db.query(Topic).all()
+    user_topics = [t.id for t in user.topics] if user.topics else []
+    user_authors = ", ".join(json.loads(user.authors)) if user.authors and user.authors != '[]' else ""
+    user_keywords = ", ".join(json.loads(user.keywords)) if user.keywords and user.keywords != '[]' else ""
+    return templates.TemplateResponse("settings.html", {"request": request, "user": user,
+        "topics": topics, "user_topics": user_topics, "user_authors": user_authors, "user_keywords": user_keywords})
+
+@app.post("/settings")
+async def save_settings(request: Request, topics: List[int] = Form([]), authors: str = Form(""),
+                        keywords: str = Form(""), confirm_reset: Optional[str] = Form(None),
+                        user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
+    if not user_id:
+        return RedirectResponse(url="/login")
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    
+    old_topics = set([t.id for t in user.topics])
+    new_topics = set(topics)
+    if old_topics != new_topics and not confirm_reset:
+        return JSONResponse({"warning": "Смена темы приведёт к сбросу данных обучения", "needs_confirmation": True})
+    
+    user.topics = []
+    for topic_id in topics:
+        topic = db.query(Topic).filter(Topic.id == topic_id).first()
+        if topic:
+            user.topics.append(topic)
+    
+    user.authors = json.dumps([a.strip() for a in authors.split(",") if a.strip()])
+    user.keywords = json.dumps([k.strip() for k in keywords.split(",") if k.strip()])
+    if confirm_reset:
+        user.feedback_history = '[]'
+    db.commit()
+    
+    # Очищаем сессию пользователя при смене настроек
+    session_key = f"user_{user.id}"
+    if session_key in user_sessions:
+        del user_sessions[session_key]
+    
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 # ============ API ============
 
@@ -232,15 +285,71 @@ async def rate_article(request: Request, article_id: str = Form(...), rating: st
         db.add(new_rating)
     db.commit()
     
+    # ОБУЧАЕМ НЕЙРОСЕТЬ
     neural_engine.update_from_feedback(user, article, rating)
     
-    # Обновляем сессию пользователя - помечаем статью как оцененную
+    # Обновляем сессию пользователя
     session_key = f"user_{user.id}"
     if session_key in user_sessions:
         for a in user_sessions[session_key]:
             if a['arxiv_id'] == article_id:
                 a['user_rating'] = rating
                 break
+    
+    # ПОСЛЕ КАЖДОЙ ОЦЕНКИ - ПЕРЕСЧИТЫВАЕМ ОСТАВШИЕСЯ СТАТЬИ
+    current_articles = user_sessions.get(session_key, [])
+    rated_ids = set()
+    ratings_db = db.query(ArticleRating).filter(ArticleRating.user_id == user.id).all()
+    for r in ratings_db:
+        if r.article:
+            rated_ids.add(r.article.arxiv_id)
+    
+    unrated_articles = [a for a in current_articles if a['arxiv_id'] not in rated_ids]
+    
+    # Если осталось мало неоцененных статей (< 5), загружаем новые
+    if len(unrated_articles) < 5:
+        logger.info(f"🔄 Осталось {len(unrated_articles)} неоцененных статей, загружаем новые...")
+        
+        # Отправляем WebSocket уведомление о скором обновлении
+        await ws_manager.send_personal_message(user.id, {'type': 'preparing_refresh', 'message': 'Нейросеть готовит новые рекомендации...'})
+        
+        # Получаем новые рекомендации с учетом обновленных предпочтений
+        new_articles = await get_fresh_recommendations(user, db, limit=15)
+        
+        # Обновляем сессию
+        user_sessions[session_key] = new_articles
+        
+        # Отправляем WebSocket уведомление о необходимости обновить страницу
+        await ws_manager.send_personal_message(user.id, {'type': 'refresh_needed', 'message': 'Новые статьи готовы! Обновите страницу.'})
+        
+        return JSONResponse({
+            "status": "success", 
+            "rating": rating,
+            "refresh_needed": True,
+            "message": "Нейросеть обновила рекомендации!"
+        })
+    
+    # Пересчитываем рейтинг оставшихся статей на основе новой оценки
+    if len(unrated_articles) > 0:
+        article_objects = []
+        for a in unrated_articles:
+            art = db.query(Article).filter(Article.arxiv_id == a['arxiv_id']).first()
+            if art:
+                article_objects.append(art)
+        
+        if article_objects:
+            arxiv_parser = ArxivDirectParser(db)
+            reranked = neural_engine.rerank_articles(user, article_objects, arxiv_parser)
+            
+            new_order = []
+            for art in reranked:
+                for a in unrated_articles:
+                    if a['arxiv_id'] == art.arxiv_id:
+                        new_order.append(a)
+                        break
+            
+            rated_articles = [a for a in current_articles if a['arxiv_id'] in rated_ids]
+            user_sessions[session_key] = rated_articles + new_order
     
     return JSONResponse({"status": "success", "rating": rating})
 
@@ -317,7 +426,7 @@ async def detailed_feedback(
 
 @app.get("/api/live-articles")
 async def get_live_articles(user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
-    """Получение новой порции статей (при нажатии кнопки)"""
+    """Получение новой порции статей с переранжированием на основе оценок"""
     if not user_id:
         return JSONResponse({"articles": [], "error": "No user_id"})
     
@@ -330,52 +439,18 @@ async def get_live_articles(user_id: Optional[str] = Cookie(None), db: Session =
     if not user_topics:
         return JSONResponse({"articles": [], "message": "No topics selected"})
     
-    # Получаем ID уже оценённых статей
-    rated_arxiv_ids = set()
-    ratings = db.query(ArticleRating).join(Article).filter(ArticleRating.user_id == user.id).all()
-    for rating in ratings:
-        if rating.article and rating.article.arxiv_id:
-            rated_arxiv_ids.add(rating.article.arxiv_id)
+    logger.info(f"🔄 Загрузка новых персонализированных статей для user {user.id}")
     
-    # Загружаем новые статьи (исключая оцененные и показанные в текущей сессии)
+    arxiv_parser = ArxivDirectParser(db)
+    
+    # ОЧИЩАЕМ КЭШ показанных статей перед загрузкой новых
+    arxiv_parser.clear_cache(user.id)
+    
+    # Получаем свежие рекомендации
+    articles_data = await get_fresh_recommendations(user, db, limit=15)
+    
+    # Обновляем сессию
     session_key = f"user_{user.id}"
-    shown_in_session = set()
-    if session_key in user_sessions:
-        shown_in_session = {a['arxiv_id'] for a in user_sessions[session_key]}
-    
-    candidate_articles = []
-    for topic in user_topics:
-        topic_articles = db.query(Article).filter(
-            Article.topic_id == topic.id,
-            Article.arxiv_id.notin_(rated_arxiv_ids),
-            Article.arxiv_id.notin_(shown_in_session)
-        ).order_by(Article.published_date.desc()).limit(100).all()
-        candidate_articles.extend(topic_articles)
-    
-    if not candidate_articles:
-        return JSONResponse({"articles": [], "message": "Нет новых статей. Добавьте больше тем в настройках."})
-    
-    random.shuffle(candidate_articles)
-    
-    try:
-        personalized = neural_engine.get_personalized_articles(user, candidate_articles, limit=15)
-        articles = personalized
-    except:
-        articles = candidate_articles[:15]
-    
-    articles_data = []
-    for article in articles:
-        articles_data.append({
-            'arxiv_id': article.arxiv_id,
-            'title': article.title,
-            'authors': article.authors,
-            'abstract': (article.abstract[:400] if article.abstract else ''),
-            'url': article.url,
-            'topic_id': article.topic_id,
-            'topic_name': article.topic.name if article.topic else 'Unknown'
-        })
-    
-    # Обновляем сессию новыми статьями
     user_sessions[session_key] = articles_data
     
     return JSONResponse({"articles": articles_data})
@@ -401,59 +476,21 @@ async def get_profile(user_id: Optional[str] = Cookie(None), db: Session = Depen
     accuracy = likes / total_ratings if total_ratings > 0 else 0
     total_articles = db.query(Article).count()
     
-    return JSONResponse({"likes": likes, "dislikes": dislikes, "total_ratings": total_ratings,
-                        "total_articles": total_articles, "accuracy": accuracy})
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
-    if not user_id:
-        return RedirectResponse(url="/login")
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    topics = db.query(Topic).all()
-    user_topics = [t.id for t in user.topics] if user.topics else []
-    user_authors = ", ".join(json.loads(user.authors)) if user.authors and user.authors != '[]' else ""
-    user_keywords = ", ".join(json.loads(user.keywords)) if user.keywords and user.keywords != '[]' else ""
-    return templates.TemplateResponse("settings.html", {"request": request, "user": user,
-        "topics": topics, "user_topics": user_topics, "user_authors": user_authors, "user_keywords": user_keywords})
-
-@app.post("/settings")
-async def save_settings(request: Request, topics: List[int] = Form([]), authors: str = Form(""),
-                        keywords: str = Form(""), confirm_reset: Optional[str] = Form(None),
-                        user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
-    if not user_id:
-        return RedirectResponse(url="/login")
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    # Получаем данные из НАСТРОЕК пользователя
+    user_topics = [t.name for t in user.topics] if user.topics else []
+    user_authors = json.loads(user.authors) if user.authors and user.authors != '[]' else []
+    user_keywords = json.loads(user.keywords) if user.keywords and user.keywords != '[]' else []
     
-    old_topics = set([t.id for t in user.topics])
-    new_topics = set(topics)
-    if old_topics != new_topics and not confirm_reset:
-        return JSONResponse({"warning": "Смена темы приведёт к сбросу данных обучения", "needs_confirmation": True})
-    
-    user.topics = []
-    for topic_id in topics:
-        topic = db.query(Topic).filter(Topic.id == topic_id).first()
-        if topic:
-            user.topics.append(topic)
-    
-    user.authors = json.dumps([a.strip() for a in authors.split(",") if a.strip()])
-    user.keywords = json.dumps([k.strip() for k in keywords.split(",") if k.strip()])
-    if confirm_reset:
-        user.feedback_history = '[]'
-    db.commit()
-    
-    # Очищаем сессию пользователя при смене настроек
-    session_key = f"user_{user.id}"
-    if session_key in user_sessions:
-        del user_sessions[session_key]
-    
-    return RedirectResponse(url="/dashboard", status_code=303)
-
-@app.get("/profile", response_class=HTMLResponse)
-async def profile_page(request: Request, user_id: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
-    if not user_id:
-        return RedirectResponse(url="/login")
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    return templates.TemplateResponse("profile.html", {"request": request, "user": user})
+    return JSONResponse({
+        "likes": likes, 
+        "dislikes": dislikes, 
+        "total_ratings": total_ratings,
+        "total_articles": total_articles, 
+        "accuracy": accuracy,
+        "user_topics": user_topics,
+        "user_authors": user_authors,
+        "user_keywords": user_keywords
+    })
 
 if __name__ == "__main__":
     import uvicorn

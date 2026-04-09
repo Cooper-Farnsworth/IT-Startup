@@ -1,7 +1,7 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.database import SessionLocal, Topic
-from app.arxiv_fetcher import ArxivFetcher
+from app.arxiv_direct import ArxivFetcher
 import logging
 
 logger = logging.getLogger(__name__)
